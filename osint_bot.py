@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 
 """
-🔥 Ultimate Free OSINT Telegram Bot v4.1 — Fully Fixed
+🔥 Ultimate Free OSINT Telegram Bot v4.1 — FULLY FIXED
 ✅ Bengali responses, English codebase
 ✅ Copy-paste ready, no subscription APIs
+✅ Fixed: EOF when reading a line / IntelX / LeakCheck / Dehashed / SQLite / Disconnect
 """
 
 import os, re, json, time, asyncio, sqlite3, logging, hashlib, base64
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
-from contextlib import asynccontextmanager
 
 import aiohttp
 from telethon import TelegramClient, functions, types
@@ -30,19 +30,19 @@ BOT_TOKEN = "8857378550:AAF6DBANExHejQIHPA71lyP7IArbrqvtew4"
 
 # === INTELX INTELLIGENCE X (FREE) ===
 # https://intelx.io → Register → Account → API Key
-# FREE users MUST use free.intelx.io as the API host (changed March 2025)
+# FREE users MUST use free.intelx.io (changed March 2025)
 INTELX_KEY = "2c451691-754c-4f7f-bf0f-952ee2ea5115"
-INTELX_HOST = "free.intelx.io"  # "2.intelx.io" for paid, "free.intelx.io" for free accounts
+INTELX_HOST = "free.intelx.io"  # "2.intelx.io" for paid accounts
 
 # === NUMVERIFY (FREE) ===
 # https://numverify.com → Register → API Key
 NUMVERIFY_KEY = "7ced1cf0bedea9fe39aef83827fb471a"
 
-# === LEAKCHECK (FREE PUBLIC API — NO KEY NEEDED FOR PUBLIC) ===
+# === LEAKCHECK ===
 # https://leakcheck.io
-# Public API (free, unauthenticated) — returns breach SOURCES only, NOT actual passwords
-# For actual leaked data: https://leakcheck.io → Pro API v2 (paid)
-LEAKCHECK_KEY = "c44d8fecdabf82faa6126aaa157a0032e4c1cb22"  # leave empty to use public API without key
+# Set key for Pro API v2 (returns actual passwords/data)
+# Leave EMPTY to use Public API (breach sources only, no passwords)
+LEAKCHECK_KEY = "c44d8fecdabf82faa6126aaa157a0032e4c1cb22"
 
 # === DEHASHED (FREE TRIAL) ===
 # https://dehashed.com → Register → API Key
@@ -89,7 +89,6 @@ class OSINTEngine:
     def __init__(self):
         self.tg_client = None
         self.http = None
-        self._tg_started = False
 
     async def get_http(self):
         if self.http is None or self.http.closed:
@@ -100,15 +99,18 @@ class OSINTEngine:
         return self.http
 
     async def get_tg(self) -> TelegramClient:
-        """Lazy-init and cache the Telegram client (no disconnect between calls)."""
+        """Lazy-init and cache the Telegram client (bot mode — no interactive input)."""
         if self.tg_client is None:
             self.tg_client = TelegramClient(
                 'osint_sess', API_ID, API_HASH,
                 device_model="OSINT Bot",
-                app_version="4.1"
+                app_version="4.1",
+                system_version="4.16.30-vxCUSTOM",
             )
         if not self.tg_client.is_connected():
-            await self.tg_client.start()
+            await self.tg_client.connect()
+            if not await self.tg_client.is_user_authorized():
+                await self.tg_client.sign_in(bot_token=BOT_TOKEN)
         return self.tg_client
 
     async def close(self):
@@ -153,16 +155,11 @@ class OSINTEngine:
             status = 'অজানা'
             if hasattr(u, 'status') and u.status:
                 st = type(u.status).__name__
-                if 'Online' in st:
-                    status = 'অনলাইন'
-                elif 'Offline' in st:
-                    status = 'অফলাইন'
-                elif 'Recently' in st:
-                    status = 'সম্প্রতি অনলাইন'
-                elif 'LastWeek' in st:
-                    status = 'গত সপ্তাহে'
-                elif 'LastMonth' in st:
-                    status = 'গত মাসে'
+                if 'Online' in st: status = 'অনলাইন'
+                elif 'Offline' in st: status = 'অফলাইন'
+                elif 'Recently' in st: status = 'সম্প্রতি অনলাইন'
+                elif 'LastWeek' in st: status = 'গত সপ্তাহে'
+                elif 'LastMonth' in st: status = 'গত মাসে'
             result['success'] = True
             result['data'] = {
                 'user_id': u.id,
@@ -296,10 +293,6 @@ class OSINTEngine:
     # 5. LEAKCHECK (FREE PUBLIC API / PRO API V2)
     # ======================================================================
     async def leakcheck_search(self, query: str, qtype: str = 'email') -> Dict:
-        """
-        Uses Pro API v2 if LEAKCHECK_KEY is set (returns actual passwords/data).
-        Falls back to Public API (returns breach sources only, no passwords).
-        """
         result = {'found': False, 'total': 0, 'entries': [], 'error': None, 'mode': 'public'}
         s = await self.get_http()
         try:
@@ -325,7 +318,6 @@ class OSINTEngine:
                                     'source': entry.get('source', 'LeakCheck'),
                                     'line': entry.get('line', ''),
                                 })
-                            # Sort: entries with passwords first
                             result['entries'].sort(key=lambda x: 0 if x['password'] else 1)
                     elif r.status == 429:
                         result['error'] = 'রেট লিমিট!'
@@ -338,7 +330,7 @@ class OSINTEngine:
                 result['mode'] = 'public'
                 async with s.get(
                     'https://leakcheck.io/api/public',
-                    params={'check': query}  # 'type' param NOT used in public API
+                    params={'check': query}
                 ) as r:
                     if r.status == 200:
                         d = await r.json()
@@ -346,22 +338,20 @@ class OSINTEngine:
                             result['found'] = True
                             result['total'] = len(d)
                             for breach in d[:10]:
-                                source = breach.get('name', breach.get('source', 'Unknown'))
                                 result['entries'].append({
-                                    'source': source,
+                                    'source': breach.get('name', breach.get('source', 'Unknown')),
                                     'date': breach.get('date', ''),
                                     'description': breach.get('description', ''),
-                                    'password': '',  # public API never returns passwords
+                                    'password': '',
                                 })
                         elif isinstance(d, dict):
-                            # Some response shapes return dict with 'success'
                             if d.get('success') and d.get('found'):
                                 result['found'] = True
                                 result['total'] = int(d.get('count', 0))
                                 for entry in d.get('result', [])[:10]:
                                     result['entries'].append({
                                         'source': entry.get('source', entry.get('name', 'Unknown')),
-                                        'password': '',  # public API = no passwords
+                                        'password': '',
                                     })
                     elif r.status == 429:
                         result['error'] = 'রেট লিমিট!'
@@ -375,7 +365,7 @@ class OSINTEngine:
         return result
 
     # ======================================================================
-    # 6. INTELX.IO (FREE TIER — uses free.intelx.io)
+    # 6. INTELX.IO (FREE TIER)
     # ======================================================================
     async def intelx_search(self, query: str, qtype: str = 'email') -> Dict:
         result = {'found': False, 'total': 0, 'entries': [], 'error': None}
@@ -385,16 +375,12 @@ class OSINTEngine:
         try:
             s = await self.get_http()
             type_map = {
-                'email': 'email',
-                'username': 'username',
-                'phone': 'phone',
-                'domain': 'domain',
-                'fullname': 'fullname',
+                'email': 'email', 'username': 'username',
+                'phone': 'phone', 'domain': 'domain', 'fullname': 'fullname',
             }
             search_type = type_map.get(qtype, 'email')
-            host = INTELX_HOST  # 'free.intelx.io' for free accounts
             async with s.post(
-                f'https://{host}/intelligent/search',
+                f'https://{INTELX_HOST}/intelligent/search',
                 json={
                     'term': query,
                     'lookuplevel': 0,
@@ -415,8 +401,7 @@ class OSINTEngine:
                     if total > 0:
                         result['found'] = True
                         result['total'] = total
-                        selectors = d.get('selectors', [])[:5]
-                        for sel in selectors:
+                        for sel in d.get('selectors', [])[:5]:
                             result['entries'].append({
                                 'selector': sel.get('selectorvalue', ''),
                                 'type': sel.get('type', ''),
@@ -446,7 +431,6 @@ class OSINTEngine:
             return result
         try:
             s = await self.get_http()
-            # Proper base64 basic auth
             auth_str = f'{DEHASHED_EMAIL}:{DEHASHED_KEY}'
             auth_b64 = base64.b64encode(auth_str.encode()).decode()
             async with s.get(
@@ -520,11 +504,10 @@ class OSINTBot:
             logger.error(f"save err: {e}")
 
     async def _update_msg(self, msg, text):
-        """Safely update a message with error handling."""
         try:
             await msg.edit_text(text, parse_mode='Markdown')
         except Exception:
-            pass  # message may be too old to edit
+            pass
 
     async def start(self, u: Update, c: ContextTypes.DEFAULT_TYPE):
         user = u.effective_user
@@ -539,17 +522,17 @@ class OSINTBot:
         except Exception:
             pass
         txt = (
-            '🔥 **আলটিমেট OSINT বটে স্বাগতম!** {user.first_name}!\n'
-            '━━━━━━━━━━━━━━━━━━━━\n'
-            '👤 `/u @username` — প্রোফাইল + সব API\n'
-            '📞 `/p 01XXXXXXXXX` — ফোন + লিক চেক\n'
-            '📧 `/e user@ex.com` — ইমেইল + সব ব্রিচ\n'
-            '🔍 `/all @username` — ফুল স্ক্যান (সেরা!)\n'
-            '⚠️ `/leak @username` — শুধু লিক ডাটা\n'
-            '📋 `/history` — হিস্টোরি\n'
-            '📊 `/stats` — পরিসংখ্যান\n'
-            '━━━━━━━━━━━━━━━━━━━━\n'
-            '💡 টিপ: `/all @username` সবচেয়ে বেশি তথ্য দেয়!'
+            f'🔥 **আলটিমেট OSINT বটে স্বাগতম!** {user.first_name}!\n'
+            f'━━━━━━━━━━━━━━━━━━━━\n'
+            f'👤 `/u @username` — প্রোফাইল + সব API\n'
+            f'📞 `/p 01XXXXXXXXX` — ফোন + লিক চেক\n'
+            f'📧 `/e user@ex.com` — ইমেইল + সব ব্রিচ\n'
+            f'🔍 `/all @username` — ফুল স্ক্যান (সেরা!)\n'
+            f'⚠️ `/leak @username` — শুধু লিক ডাটা\n'
+            f'📋 `/history` — হিস্টোরি\n'
+            f'📊 `/stats` — পরিসংখ্যান\n'
+            f'━━━━━━━━━━━━━━━━━━━━\n'
+            f'💡 টিপ: `/all @username` সবচেয়ে বেশি তথ্য দেয়!'
         )
         keyboard = [
             [InlineKeyboardButton('👤 ইউজার', callback_data='hu'),
@@ -599,48 +582,44 @@ class OSINTBot:
         )
 
         # LeakCheck username
-        lc_text = ''
         lc = await self.engine.leakcheck_search(username, 'username')
         if lc['found']:
             mode_label = 'প্রো' if lc.get('mode') == 'pro' else 'পাবলিক'
-            lc_text += f'\n⚠️ **LeakCheck ({mode_label}) — {lc["total"]}টি:**\n'
+            text += f'\n⚠️ **LeakCheck ({mode_label}) — {lc["total"]}টি:**\n'
             for e in lc['entries'][:3]:
                 if e.get('password'):
-                    lc_text += f'🔑 পাস: `{e["password"]}`\n'
+                    text += f'🔑 পাস: `{e["password"]}`\n'
                 if e.get('email'):
-                    lc_text += f'📧 {e["email"]}\n'
+                    text += f'📧 {e["email"]}\n'
                 if e.get('source') and not e.get('password'):
-                    lc_text += f'📁 {e["source"]}\n'
+                    text += f'📁 {e["source"]}\n'
         elif lc['error']:
-            lc_text += f'\n⚠️ LeakCheck: {lc["error"]}\n'
+            text += f'\n⚠️ LeakCheck: {lc["error"]}\n'
 
         # IntelX username
-        ix_text = ''
         if INTELX_KEY:
             ix = await self.engine.intelx_search(username, 'username')
             if ix['found']:
-                ix_text += f'\n🌐 **IntelX:** {ix["total"]}টি রেজাল্ট\n'
+                text += f'\n🌐 **IntelX:** {ix["total"]}টি রেজাল্ট\n'
                 for e in ix['entries'][:3]:
                     if e.get('selector'):
-                        ix_text += f'📄 {e["selector"][:80]}\n'
+                        text += f'📄 {e["selector"][:80]}\n'
             elif ix['error']:
-                ix_text += f'\n🌐 IntelX: {ix["error"]}\n'
+                text += f'\n🌐 IntelX: {ix["error"]}\n'
 
         # Dehashed username
-        dh_text = ''
         if DEHASHED_KEY and DEHASHED_EMAIL:
             dh = await self.engine.dehashed_search(username, 'username')
             if dh['found']:
-                dh_text += f'\n⚠️ **Dehashed ({dh["total"]}টি):**\n'
+                text += f'\n⚠️ **Dehashed ({dh["total"]}টি):**\n'
                 for e in dh['entries'][:3]:
                     if e.get('password'):
-                        dh_text += f'🔑 `{e["password"]}`\n'
+                        text += f'🔑 `{e["password"]}`\n'
                     if e.get('email'):
-                        dh_text += f'📧 {e["email"]}\n'
+                        text += f'📧 {e["email"]}\n'
             elif dh['error']:
-                dh_text += f'\n⚠️ Dehashed: {dh["error"]}\n'
+                text += f'\n⚠️ Dehashed: {dh["error"]}\n'
 
-        text += lc_text + ix_text + dh_text
         self._save(u.effective_user.id, username, 'username', username,
                    f'{d["first_name"]} {d["last_name"]}')
         await msg.edit_text(text, parse_mode='Markdown')
@@ -653,7 +632,6 @@ class OSINTBot:
 
         text = f'📞 **ফোন স্ক্যান**\n━━━━━━━━━━━━━━━━━━━━\n🔢 `{phone}`\n'
 
-        # Numverify
         if NUMVERIFY_KEY:
             pv = await self.engine.validate_phone(phone)
             if pv['valid']:
@@ -664,7 +642,6 @@ class OSINTBot:
         else:
             text += '📡 Numverify: API key নেই\n'
 
-        # Telegram phone check
         await self._update_msg(msg, text + '\n📡 টেলিগ্রাম চেক...')
         tg = await self.engine.tg_phone_check(phone)
         if tg['found']:
@@ -680,7 +657,6 @@ class OSINTBot:
         else:
             text += '\n❌ টেলিগ্রামে নেই\n'
 
-        # LeakCheck phone
         lc = await self.engine.leakcheck_search(phone, 'phone')
         if lc['found']:
             mode_label = 'প্রো' if lc.get('mode') == 'pro' else 'পাবলিক'
@@ -695,7 +671,6 @@ class OSINTBot:
         elif lc['error']:
             text += f'\n⚠️ LeakCheck: {lc["error"]}\n'
 
-        # Dehashed phone
         if DEHASHED_KEY and DEHASHED_EMAIL:
             dh = await self.engine.dehashed_search(phone, 'phone')
             if dh['found']:
@@ -718,7 +693,6 @@ class OSINTBot:
 
         text = f'📧 **ইমেইল রিপোর্ট**\n━━━━━━━━━━━━━━━━━━━━\n🎯 `{email_str}`\n\n'
 
-        # EmailRep (FREE — no key)
         text += '**📊 EmailRep:**\n'
         await self._update_msg(msg, text + '⏳ চেক...')
         rep = await self.engine.emailrep_check(email_str)
@@ -736,7 +710,6 @@ class OSINTBot:
         else:
             text += 'ℹ️ তথ্য নেই\n\n'
 
-        # LeakCheck email
         text += '**⚠️ LeakCheck:**\n'
         await self._update_msg(msg, text + '⏳ চেক...')
         lc = await self.engine.leakcheck_search(email_str, 'email')
@@ -756,7 +729,6 @@ class OSINTBot:
             text += '✅ পাওয়া যায়নি\n'
         text += '\n'
 
-        # Dehashed email
         if DEHASHED_KEY and DEHASHED_EMAIL:
             text += '**⚠️ Dehashed:**\n'
             await self._update_msg(msg, text + '⏳ চেক...')
@@ -774,7 +746,6 @@ class OSINTBot:
                 text += '✅ পাওয়া যায়নি\n'
             text += '\n'
 
-        # IntelX email
         if INTELX_KEY:
             text += '**🌐 IntelX:**\n'
             await self._update_msg(msg, text + '⏳ চেক...')
@@ -809,7 +780,6 @@ class OSINTBot:
             f'━━━━━━━━━━━━━━━━━━━━\n\n'
         )
 
-        # Telegram
         tg = await self.engine.tg_lookup(target)
         phone = None
         if tg['success']:
@@ -826,8 +796,6 @@ class OSINTBot:
                 f'✅ ভেরিফাইড: {"হ্যাঁ" if d["is_verified"] else "না"}\n'
                 f'👥 গ্রুপ: {d["groups_count"]}টি\n\n'
             )
-
-            # Phone validation
             if phone and NUMVERIFY_KEY:
                 await self._update_msg(msg, '🔥 স্ক্যান...\n📌 ফোন ভ্যালিডেশন...')
                 pv = await self.engine.validate_phone(phone)
@@ -838,7 +806,6 @@ class OSINTBot:
                         f'🏢 {pv["data"]["carrier"]}\n\n'
                     )
 
-        # LeakCheck
         await self._update_msg(msg, '🔥 স্ক্যান...\n📌 LeakCheck...')
         lc = await self.engine.leakcheck_search(target, 'username')
         if lc['found']:
@@ -853,7 +820,6 @@ class OSINTBot:
                     text += f'📁 {e["source"]}\n'
             text += '\n'
 
-        # Dehashed
         if DEHASHED_KEY and DEHASHED_EMAIL:
             await self._update_msg(msg, '🔥 স্ক্যান...\n📌 Dehashed...')
             dh = await self.engine.dehashed_search(target, 'username')
@@ -866,7 +832,6 @@ class OSINTBot:
                         text += f'📧 {e["email"]}\n'
                 text += '\n'
 
-        # IntelX
         if INTELX_KEY:
             await self._update_msg(msg, '🔥 স্ক্যান...\n📌 IntelX...')
             ix = await self.engine.intelx_search(target, 'username')
@@ -893,7 +858,6 @@ class OSINTBot:
         text = f'⚠️ **লিক ডাটা চেক**\n🎯 `{query}`\n━━━━━━━━━━━━━━━━━━━━\n\n'
         found = False
 
-        # LeakCheck
         qtype = 'email' if '@' in query else 'username'
         lc = await self.engine.leakcheck_search(query, qtype)
         if lc['found']:
@@ -913,7 +877,6 @@ class OSINTBot:
         elif lc['error']:
             text += f'**LeakCheck:** {lc["error"]}\n\n'
 
-        # Dehashed
         if DEHASHED_KEY and DEHASHED_EMAIL:
             dh = await self.engine.dehashed_search(query, qtype)
             if dh['found']:
@@ -928,7 +891,6 @@ class OSINTBot:
             elif dh['error']:
                 text += f'**Dehashed:** {dh["error"]}\n\n'
 
-        # EmailRep
         if '@' in query:
             rep = await self.engine.emailrep_check(query)
             if rep['data'] and rep['data'].get('leaked'):
@@ -1018,7 +980,6 @@ class OSINTBot:
     async def button_handler(self, u: Update, c: ContextTypes.DEFAULT_TYPE):
         q = u.callback_query
         await q.answer()
-
         msgs = {
             'hu': '👤 `/u @username` — প্রোফাইল + ফোন + লিক ডাটা',
             'hp': '📞 `/p 01XXX` — ফোন ভ্যালিডেশন + টেলিগ্রাম + লিক',
@@ -1026,9 +987,9 @@ class OSINTBot:
             'hf': '🔍 `/all @user` — সব API একসাথে (সেরা)',
             'hl': '⚠️ `/leak query` — শুধু লিক/ব্রিচ ডাটা সার্চ',
             'as': (
-                '📊 **API স্ট্যাটাস:**\n'
-                '✅ টেলিগ্রাম\n'
-                '✅ EmailRep\n'
+                f'📊 **API স্ট্যাটাস:**\n'
+                f'✅ টেলিগ্রাম\n'
+                f'✅ EmailRep\n'
                 f'{"✅" if INTELX_KEY else "❌"} IntelX ({INTELX_HOST})\n'
                 f'{"✅ (প্রো)" if LEAKCHECK_KEY else "✅ (পাবলিক)"} LeakCheck\n'
                 f'{"✅" if DEHASHED_KEY else "❌"} Dehashed\n'
@@ -1053,8 +1014,8 @@ def main():
     print("""
     ╔═══════════════════════════════════════╗
     ║  🔥 Ultimate OSINT Bot v4.1          ║
+    ║  Fully Fixed — Production Ready      ║
     ║  Zero API Keys Required — Free       ║
-    ║  FULLY FIXED — Production Ready      ║
     ╚═══════════════════════════════════════╝
     """)
 
@@ -1076,7 +1037,6 @@ def main():
     bot = OSINTBot()
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Register handlers
     app.add_handler(CommandHandler('start', bot.start))
     app.add_handler(CommandHandler(['u', 'username', 'full'], bot.username))
     app.add_handler(CommandHandler(['p', 'phone'], bot.phone))
