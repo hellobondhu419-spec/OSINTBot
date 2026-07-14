@@ -1,3 +1,4 @@
-aiohttp
-telethon
-python-telegram-bot
+telethon==1.37.0
+python-telegram-bot==20.8
+aiohttp==3.9.5
+cryptg==0.4.0
