@@ -8,6 +8,8 @@
 """
 
 import os, re, json, time, asyncio, sqlite3, logging, hashlib, base64
+import sys
+import sys
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -49,6 +51,11 @@ DEHASHED_KEY = "9neC7teXgg9VhYG54A1xG7YpiblHNkMth2HbReMH3UUI3QpvyD2iIMk="
 # =============================================================================
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+ndef is_interactive():
+    try:
+        return sys.stdin.isatty()
+    except:
+        return False
 DB_PATH = "osint_bot_data.db"
 
 def init_db():
@@ -84,7 +91,10 @@ class OSINTEngine:
         result = {'success': False, 'data': {}, 'error': None}
         username = username.strip().replace('@', '')
         try:
-            await self.tg.start()
+            try:
+                await self.tg.start()
+            except EOFError as e:
+                logger.warning(f"EOF reading stdin (expected in container) — {e}")
             resolved = await self.tg(functions.contacts.ResolveUsernameRequest(username=username))
             if not resolved.users:
                 result['error'] = 'এই ইউজারনেমে কোনো অ্যাকাউন্ট নেই'; return result
@@ -144,7 +154,10 @@ class OSINTEngine:
         result = {'found': False, 'data': {}, 'error': None}
         phone = re.sub(r'[^\d+]', '', phone)
         try:
-            await self.tg.start()
+            try:
+                await self.tg.start()
+            except EOFError as e:
+                logger.warning(f"EOF reading stdin (expected in container) — {e}")
             r = await self.tg(functions.contacts.ImportContactsRequest(contacts=[types.InputPhoneContact(client_id=0, phone=phone, first_name='C', last_name='U')]))
             if r.users:
                 u = r.users[0]; result['found'] = True
